@@ -5,7 +5,7 @@ import AppLayout from './layouts/AppLayout';
 
 createInertiaApp({
   pages: './pages',
-  layout: () => AppLayout,
+  layout: (name) => (name === 'Home' ? null : AppLayout),
   title: (title) => (title ? `${title} · Rust Inertia App` : 'Rust Inertia App'),
-  progress: { color: '#2563eb', delay: 150 },
+  progress: { color: '#4f8ef7', delay: 150 },
 });
