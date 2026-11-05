@@ -90,6 +90,12 @@ struct TestSession {
     csrf: String,
 }
 
+struct TestAdmin {
+    session: TestSession,
+    email: String,
+    id: i64,
+}
+
 async fn send(app: &Router, request: Request<Body>) -> TestResponse {
     let response = app
         .clone()
@@ -133,11 +139,21 @@ fn get_with_session(session: &TestSession, uri: &str) -> Request<Body> {
 }
 
 fn form_with_session(session: &TestSession, method: &str, uri: &str, body: &str) -> Request<Body> {
+    form_with_session_from(session, method, uri, uri, body)
+}
+
+fn form_with_session_from(
+    session: &TestSession,
+    method: &str,
+    uri: &str,
+    referer: &str,
+    body: &str,
+) -> Request<Body> {
     request(method, uri)
         .header("x-inertia", "true")
         .header("x-inertia-version", "test")
         .header(header::CONTENT_TYPE, "application/json")
-        .header(header::REFERER, uri)
+        .header(header::REFERER, referer)
         .header(header::COOKIE, &session.cookie)
         .header("x-csrf-token", &session.csrf)
         .body(Body::from(body.to_owned()))
@@ -171,6 +187,26 @@ fn login_payload(email: &str, password: &str) -> String {
     serde_json::json!({
         "email": email,
         "password": password,
+    })
+    .to_string()
+}
+
+fn managed_user_payload(name: &str, email: &str, is_admin: bool) -> String {
+    serde_json::json!({
+        "name": name,
+        "email": email,
+        "password": PASSWORD,
+        "password_confirmation": PASSWORD,
+        "is_admin": is_admin,
+    })
+    .to_string()
+}
+
+fn managed_user_update_payload(name: &str, email: &str, is_admin: bool) -> String {
+    serde_json::json!({
+        "name": name,
+        "email": email,
+        "is_admin": is_admin,
     })
     .to_string()
 }
@@ -209,6 +245,50 @@ fn session_from_page(response: &TestResponse, fallback_cookie: &str) -> TestSess
             .unwrap_or_else(|| fallback_cookie.to_owned()),
         csrf,
     }
+}
+
+async fn register_session(app: &Router, name: &str, email: &str) -> TestSession {
+    let guest = start_session(app).await;
+    let response = send(
+        app,
+        form_with_session(&guest, "POST", "/register", &register_payload(name, email)),
+    )
+    .await;
+
+    assert_redirect(&response, StatusCode::FOUND, "/dashboard");
+    let cookie = response.session_cookie();
+
+    let response = send(
+        app,
+        visit("GET", "/dashboard")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(response.status, StatusCode::OK);
+
+    session_from_page(&response, &cookie)
+}
+
+async fn admin_session(app: &Router, pool: &PgPool) -> TestAdmin {
+    let email = unique_email("admin");
+    let session = register_session(app, "Admin User", &email).await;
+
+    sqlx::query("UPDATE users SET is_admin = TRUE WHERE email = $1")
+        .bind(&email)
+        .execute(pool)
+        .await
+        .expect("the user should be promoted");
+
+    let id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE email = $1")
+        .bind(&email)
+        .fetch_one(pool)
+        .await
+        .expect("the promoted user should exist");
+
+    TestAdmin { session, email, id }
 }
 
 fn assert_redirect(response: &TestResponse, status: StatusCode, location: &str) {
@@ -855,11 +935,12 @@ async fn guests_and_non_admins_cannot_access_the_admin_page() {
         .await
         .expect("the user should be promoted");
 
-    let response = send(&app, get_with_session(&member_session, "/admin/users")).await;
+    let uri = format!("/admin/users?q={email}");
+    let response = send(&app, get_with_session(&member_session, &uri)).await;
     assert_eq!(response.status, StatusCode::OK);
 
     let page = response.page();
-    page.component("Admin/Users").has("users");
+    page.component("Admin/Users/Index").has("users");
 
     let users = page
         .prop("users")
@@ -872,6 +953,503 @@ async fn guests_and_non_admins_cannot_access_the_admin_page() {
         "the promoted user should be listed"
     );
     assert!(page.page().encrypt_history);
+}
+
+#[tokio::test]
+async fn admin_users_index_filters_and_paginates_without_sensitive_fields() {
+    let (app, pool) = test_app_with_pool().await;
+    let admin = admin_session(&app, &pool).await;
+    let local = unique_email("list");
+    let prefix = local.split('@').next().expect("an email local part");
+
+    for index in 0..12 {
+        let name = format!("List User {index}");
+        let email = format!("{prefix}-{index}@example.com");
+
+        sqlx::query(
+            "INSERT INTO users (name, email, password_hash, is_admin) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(name)
+        .bind(email)
+        .bind("unused")
+        .bind(false)
+        .execute(&pool)
+        .await
+        .expect("a listed user");
+    }
+
+    sqlx::query("INSERT INTO users (name, email, password_hash, is_admin) VALUES ($1, $2, $3, $4)")
+        .bind("List Admin")
+        .bind(format!("{prefix}-admin@example.com"))
+        .bind("unused")
+        .bind(true)
+        .execute(&pool)
+        .await
+        .expect("a listed admin");
+
+    let uri = format!("/admin/users?q={prefix}&page=1");
+    let response = send(&app, get_with_session(&admin.session, &uri)).await;
+    assert_eq!(response.status, StatusCode::OK);
+
+    let page = response.page();
+    page.component("Admin/Users/Index")
+        .has_count("users", 10)
+        .equals("pagination.total", 13)
+        .equals("pagination.current_page", 1)
+        .equals("pagination.last_page", 2)
+        .equals("filters.q", prefix)
+        .missing("users.0.password_hash");
+    assert!(!response.body.contains("password_hash"));
+    assert!(!response.body.contains("unused"));
+    assert!(page.page().encrypt_history);
+
+    let uri = format!("/admin/users?q={prefix}&page=2");
+    let response = send(&app, get_with_session(&admin.session, &uri)).await;
+    assert_eq!(response.status, StatusCode::OK);
+    response
+        .page()
+        .component("Admin/Users/Index")
+        .has_count("users", 3)
+        .equals("pagination.current_page", 2);
+
+    let uri = format!("/admin/users?q={prefix}&role=admin");
+    let response = send(&app, get_with_session(&admin.session, &uri)).await;
+    assert_eq!(response.status, StatusCode::OK);
+    response
+        .page()
+        .component("Admin/Users/Index")
+        .has_count("users", 1)
+        .equals("users.0.is_admin", true)
+        .equals("pagination.total", 1);
+
+    let uri = format!("/admin/users?q={prefix}&role=member");
+    let response = send(&app, get_with_session(&admin.session, &uri)).await;
+    assert_eq!(response.status, StatusCode::OK);
+    response
+        .page()
+        .component("Admin/Users/Index")
+        .has_count("users", 10)
+        .equals("pagination.total", 12)
+        .equals("pagination.last_page", 2);
+}
+
+#[tokio::test]
+async fn admin_can_create_and_show_a_user() {
+    let (app, pool) = test_app_with_pool().await;
+    let admin = admin_session(&app, &pool).await;
+
+    let response = send(
+        &app,
+        get_with_session(&admin.session, "/admin/users/create"),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::OK);
+    response
+        .page()
+        .component("Admin/Users/Create")
+        .missing("user");
+
+    let email = unique_email("created");
+    let response = send(
+        &app,
+        form_with_session_from(
+            &admin.session,
+            "POST",
+            "/admin/users",
+            "/admin/users/create",
+            &managed_user_payload("Created User", &email, true),
+        ),
+    )
+    .await;
+
+    assert_eq!(response.status, StatusCode::FOUND);
+    let location = response
+        .header("location")
+        .expect("a redirect location")
+        .to_owned();
+    assert!(
+        location.starts_with("/admin/users/"),
+        "expected the created user URL, got {location}"
+    );
+    let id = location
+        .rsplit('/')
+        .next()
+        .and_then(|value| value.parse::<i64>().ok())
+        .expect("a created user id");
+    let cookie = response.session_cookie();
+
+    let response = send(
+        &app,
+        visit("GET", &location)
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::OK);
+
+    let page = response.page();
+    page.component("Admin/Users/Show")
+        .equals("user.name", "Created User")
+        .equals("user.email", email)
+        .equals("user.is_admin", true)
+        .missing("user.password_hash")
+        .flash("success", "Created User was created.");
+    assert!(!response.body.contains("password_hash"));
+    assert!(page.page().encrypt_history);
+
+    let password_hash: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .expect("the created user's password hash");
+    assert!(password_hash.starts_with("$argon2id$"));
+}
+
+#[tokio::test]
+async fn admin_create_user_validation_rejects_bad_input_and_duplicate_email() {
+    let (app, pool) = test_app_with_pool().await;
+    let admin = admin_session(&app, &pool).await;
+
+    let response = send(
+        &app,
+        form_with_session_from(
+            &admin.session,
+            "POST",
+            "/admin/users",
+            "/admin/users/create",
+            r#"{"name":"A","email":"not-an-email","password":"short","password_confirmation":"different","is_admin":false}"#,
+        ),
+    )
+    .await;
+
+    assert_redirect(&response, StatusCode::FOUND, "/admin/users/create");
+    let cookie = response.session_cookie();
+
+    let response = send(
+        &app,
+        visit("GET", "/admin/users/create")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::OK);
+    response
+        .page()
+        .component("Admin/Users/Create")
+        .equals("errors.name", "Your name must be at least 2 characters.")
+        .equals("errors.email", "Please enter a valid email address.")
+        .equals(
+            "errors.password",
+            "Your password must be at least 12 characters.",
+        )
+        .equals(
+            "errors.password_confirmation",
+            "The password confirmation does not match.",
+        );
+
+    let response = send(
+        &app,
+        form_with_session_from(
+            &admin.session,
+            "POST",
+            "/admin/users",
+            "/admin/users/create",
+            &managed_user_payload("Duplicate User", &admin.email, false),
+        ),
+    )
+    .await;
+
+    assert_redirect(&response, StatusCode::FOUND, "/admin/users/create");
+    let cookie = response.session_cookie();
+
+    let response = send(
+        &app,
+        visit("GET", "/admin/users/create")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    response
+        .page()
+        .component("Admin/Users/Create")
+        .equals("errors.email", "An account with this email already exists.");
+}
+
+#[tokio::test]
+async fn admin_can_update_a_user_but_cannot_demote_self() {
+    let (app, pool) = test_app_with_pool().await;
+    let admin = admin_session(&app, &pool).await;
+    let email = unique_email("target");
+    let password_hash = auth::hash_password(PASSWORD).expect("a password hash");
+
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (name, email, password_hash, is_admin) VALUES ($1, $2, $3, FALSE) RETURNING id",
+    )
+    .bind("Target User")
+    .bind(&email)
+    .bind(&password_hash)
+    .fetch_one(&pool)
+    .await
+    .expect("a target user");
+
+    let uri = format!("/admin/users/{id}");
+    let edit_uri = format!("{uri}/edit");
+    let response = send(&app, get_with_session(&admin.session, &edit_uri)).await;
+    assert_eq!(response.status, StatusCode::OK);
+    response
+        .page()
+        .component("Admin/Users/Edit")
+        .equals("user.name", "Target User")
+        .equals("isSelf", false)
+        .missing("user.password_hash");
+
+    let updated_email = unique_email("updated");
+    let response = send(
+        &app,
+        form_with_session_from(
+            &admin.session,
+            "PUT",
+            &uri,
+            &edit_uri,
+            &managed_user_update_payload("Updated User", &updated_email, true),
+        ),
+    )
+    .await;
+
+    assert_redirect(&response, StatusCode::SEE_OTHER, &uri);
+    let cookie = response.session_cookie();
+
+    let response = send(
+        &app,
+        visit("GET", &uri)
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::OK);
+    response
+        .page()
+        .component("Admin/Users/Show")
+        .equals("user.name", "Updated User")
+        .equals("user.email", &updated_email)
+        .equals("user.is_admin", true)
+        .missing("user.password_hash")
+        .flash("success", "Updated User was updated.");
+
+    let unchanged_hash: String =
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("the unchanged password hash");
+    assert_eq!(unchanged_hash, password_hash);
+
+    let new_password = "an even longer password";
+    let password_payload = serde_json::json!({
+        "name": "Updated User",
+        "email": updated_email,
+        "password": new_password,
+        "password_confirmation": new_password,
+        "is_admin": true,
+    })
+    .to_string();
+    let response = send(
+        &app,
+        form_with_session_from(&admin.session, "PUT", &uri, &edit_uri, &password_payload),
+    )
+    .await;
+    assert_redirect(&response, StatusCode::SEE_OTHER, &uri);
+
+    let changed_hash: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .expect("the changed password hash");
+    assert_ne!(changed_hash, password_hash);
+    assert!(auth::verify_password(new_password, &changed_hash));
+
+    let own_uri = format!("/admin/users/{}", admin.id);
+    let own_edit_uri = format!("{own_uri}/edit");
+    let response = send(
+        &app,
+        form_with_session_from(
+            &admin.session,
+            "PUT",
+            &own_uri,
+            &own_edit_uri,
+            &managed_user_update_payload("Admin User", &admin.email, false),
+        ),
+    )
+    .await;
+
+    assert_redirect(&response, StatusCode::SEE_OTHER, &own_edit_uri);
+    let cookie = response.session_cookie();
+
+    let response = send(
+        &app,
+        visit("GET", &own_edit_uri)
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::OK);
+    response.page().component("Admin/Users/Edit").equals(
+        "errors.is_admin",
+        "You cannot remove your own admin access.",
+    );
+
+    let is_admin: bool = sqlx::query_scalar("SELECT is_admin FROM users WHERE id = $1")
+        .bind(admin.id)
+        .fetch_one(&pool)
+        .await
+        .expect("the admin's role");
+    assert!(is_admin);
+}
+
+#[tokio::test]
+async fn admin_can_delete_a_user_but_not_self_and_missing_users_are_not_found() {
+    let (app, pool) = test_app_with_pool().await;
+    let admin = admin_session(&app, &pool).await;
+    let email = unique_email("delete");
+
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (name, email, password_hash, is_admin) VALUES ($1, $2, $3, FALSE) RETURNING id",
+    )
+    .bind("Delete Me")
+    .bind(&email)
+    .bind("unused")
+    .fetch_one(&pool)
+    .await
+    .expect("a deletable user");
+
+    let uri = format!("/admin/users/{id}");
+    let response = send(&app, delete_with_session(&admin.session, &uri)).await;
+    assert_redirect(&response, StatusCode::SEE_OTHER, "/admin/users");
+    let cookie = response.session_cookie();
+
+    let response = send(
+        &app,
+        visit("GET", &uri)
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::NOT_FOUND);
+
+    let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&pool)
+        .await
+        .expect("the deleted user lookup");
+    assert!(exists.is_none());
+
+    let own_uri = format!("/admin/users/{}", admin.id);
+    let response = send(&app, delete_with_session(&admin.session, &own_uri)).await;
+    assert_eq!(response.status, StatusCode::FORBIDDEN);
+    assert_eq!(response.body, "Forbidden");
+
+    let missing = 999_999_999_i64;
+    let missing_uri = format!("/admin/users/{missing}");
+    let missing_edit_uri = format!("{missing_uri}/edit");
+
+    let response = send(&app, get_with_session(&admin.session, &missing_uri)).await;
+    assert_eq!(response.status, StatusCode::NOT_FOUND);
+
+    let response = send(&app, get_with_session(&admin.session, &missing_edit_uri)).await;
+    assert_eq!(response.status, StatusCode::NOT_FOUND);
+
+    let response = send(
+        &app,
+        form_with_session_from(
+            &admin.session,
+            "PUT",
+            &missing_uri,
+            &missing_edit_uri,
+            &managed_user_update_payload("Nobody", &unique_email("nobody"), false),
+        ),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::NOT_FOUND);
+
+    let response = send(&app, delete_with_session(&admin.session, &missing_uri)).await;
+    assert_eq!(response.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn admin_user_management_requires_an_administrator() {
+    let (app, _pool) = test_app_with_pool().await;
+    let guest = start_session(&app).await;
+
+    for uri in [
+        "/admin/users/create",
+        "/admin/users/1",
+        "/admin/users/1/edit",
+    ] {
+        let response = send(&app, get_with_session(&guest, uri)).await;
+        assert_redirect(&response, StatusCode::SEE_OTHER, "/login");
+    }
+
+    let guest_payload = managed_user_payload("Nope", &unique_email("nope"), false);
+    let response = send(
+        &app,
+        form_with_session_from(
+            &guest,
+            "POST",
+            "/admin/users",
+            "/admin/users/create",
+            &guest_payload,
+        ),
+    )
+    .await;
+    assert_redirect(&response, StatusCode::SEE_OTHER, "/login");
+
+    let member_email = unique_email("plain");
+    let member = register_session(&app, "Plain Member", &member_email).await;
+
+    for uri in [
+        "/admin/users/create",
+        "/admin/users/1",
+        "/admin/users/1/edit",
+    ] {
+        let response = send(&app, get_with_session(&member, uri)).await;
+        assert_eq!(response.status, StatusCode::FORBIDDEN);
+        assert_eq!(response.body, "Forbidden");
+    }
+
+    let response = send(
+        &app,
+        form_with_session_from(
+            &member,
+            "POST",
+            "/admin/users",
+            "/admin/users/create",
+            &guest_payload,
+        ),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::FORBIDDEN);
+
+    let response = send(
+        &app,
+        form_with_session_from(
+            &member,
+            "PUT",
+            "/admin/users/1",
+            "/admin/users/1/edit",
+            &managed_user_update_payload("Nope", &unique_email("nope"), false),
+        ),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::FORBIDDEN);
+
+    let response = send(&app, delete_with_session(&member, "/admin/users/1")).await;
+    assert_eq!(response.status, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

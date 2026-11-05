@@ -85,6 +85,18 @@ Migrations run automatically when the server starts. Add a new `.sql` file under
 
 `tower-sessions` is on the 0.15 line. The `tower-sessions-sqlx-store` release on crates.io (`0.15.0`) still depends on `tower-sessions-core` 0.14, so it is pinned to a Git revision that uses core 0.15 and SQLx 0.8. Remove the pin once a compatible release is published.
 
+## User management
+
+Administrators can manage accounts at `/admin/users`:
+
+- The index supports name/email search, an admin/member role filter, and 10 accounts per page.
+- `/admin/users/create` creates an account; `/admin/users/{id}` shows it; `/admin/users/{id}/edit` updates it.
+- Updates can change the name, email, role, and optionally the password. Leaving both password fields blank keeps the current hash.
+- Deleting an account requires an inline confirmation in the list UI.
+- Admins cannot delete or demote their own account. Other accounts can be changed freely.
+- The server loads only `id`, `name`, `email`, `is_admin`, and `created_at` for management pages. `password_hash` is never serialized into Inertia props.
+- Every route is protected by the Rust `AdminUser` extractor. Guests are redirected to `/login`; signed-in non-admins receive `403 Forbidden`.
+
 ## Production build
 
 ```bash
@@ -126,6 +138,7 @@ resources/
 ├── css/app.css      Tailwind entry point
 └── js/
     ├── app.tsx      Inertia client setup
+    ├── components/  shared components such as the user form
     ├── layouts/     shared application shell with auth navigation and flash
     ├── pages/       one React component per Inertia page
     └── types.ts     shared page prop types

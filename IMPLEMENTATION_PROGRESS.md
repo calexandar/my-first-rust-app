@@ -133,12 +133,27 @@
 
 ## Phase 5 — Application feature
 
-- [ ] List
-- [ ] Create
-- [ ] Show/edit
-- [ ] Update
-- [ ] Delete
-- [ ] Validation and authorization tests
+- [x] List
+- [x] Create
+- [x] Show/edit
+- [x] Update
+- [x] Delete
+- [x] Validation and authorization tests
+
+### Phase 5 verification log
+
+- Built end-to-end admin user management at `/admin/users`, using the suggested first feature from the implementation plan.
+- Backend routes: index/store, create form, show, edit form, update (`PUT`/`PATCH`), and delete. All use the Rust `AdminUser` extractor.
+- Index supports name/email search, admin/member filtering, and 10-row pagination with `page`, `q`, and `role` query parameters.
+- Validation covers name length, email format, password length and confirmation, duplicate emails, and self-demotion. Self-delete and self-demotion are rejected.
+- Management queries serialize only `id`, `name`, `email`, `is_admin`, and `created_at`; `password_hash` never appears in Inertia props. Updates use `COALESCE` so a blank password keeps the existing hash.
+- Added `migrations/20261105020000_add_users_listing_indexes.sql` for ordering and role-filtered listing.
+- Frontend adds `Admin/Users/Index`, `Create`, `Edit`, and `Show` pages plus a shared `UserForm` component. The index includes search filters, empty state, pagination controls, inline delete confirmation, and delete/loading states.
+- `cargo fmt --all -- --check`: passed.
+- `cargo clippy --all-targets -- -D warnings`: passed.
+- `cargo test`: passed; 17 unit tests and 27 integration tests. New coverage includes list filtering/pagination, password-field omission, create/show, validation and duplicate email, update with and without password changes, self-demotion prevention, delete and self-delete prevention, not-found paths, and guest/non-admin authorization for all management routes.
+- `npm run typecheck` and `npm run build`: passed; 601 modules; `Index`, `Create`, `Edit`, `Show`, and `UserForm` chunks generated.
+- Runtime check: loaded the admin index, create, edit, and show pages through the Vite dev server; all returned `200` with the expected Inertia components.
 
 ## Phase 6 — Quality
 

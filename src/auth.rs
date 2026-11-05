@@ -30,15 +30,6 @@ pub struct AuthProps {
     pub user: Option<UserSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
-pub struct AdminUserRow {
-    pub id: i64,
-    pub name: String,
-    pub email: String,
-    pub is_admin: bool,
-    pub created_at: String,
-}
-
 #[derive(sqlx::FromRow)]
 pub struct LoginUser {
     pub id: i64,
@@ -104,19 +95,6 @@ pub async fn create_user(
     .bind(email)
     .bind(password_hash)
     .fetch_one(pool)
-    .await
-}
-
-pub async fn list_users(pool: &PgPool) -> Result<Vec<AdminUserRow>, sqlx::Error> {
-    sqlx::query_as::<_, AdminUserRow>(
-        r#"
-        SELECT id, name, email, is_admin,
-               to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
-        FROM users
-        ORDER BY created_at DESC, id DESC
-        "#,
-    )
-    .fetch_all(pool)
     .await
 }
 

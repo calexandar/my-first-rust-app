@@ -74,7 +74,16 @@ pub fn app_with_session_store(
         )
         .route("/logout", post(auth_handlers::logout))
         .route("/dashboard", get(dashboard::index))
-        .route("/admin/users", get(admin::users))
+        .route("/admin/users", get(admin::index).post(admin::store))
+        .route("/admin/users/create", get(admin::create_form))
+        .route(
+            "/admin/users/{id}",
+            get(admin::show)
+                .put(admin::update)
+                .patch(admin::update)
+                .delete(admin::destroy),
+        )
+        .route("/admin/users/{id}/edit", get(admin::edit))
         .fallback(not_found)
         .layer(from_fn_with_state(pool.clone(), auth::load_current_user))
         .layer(from_fn(csrf::protect))
