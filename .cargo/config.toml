@@ -1,0 +1,5 @@
+# The adapter's macro crate is published to the Pilot registry. Cargo needs the
+# registry declared to parse the adapter manifest, even when it is consumed as a
+# pinned Git dependency. The path inside the Git checkout is used for the macro.
+[registries.pilot]
+index = "sparse+https://pilot.laravel.cloud/cargo/index/"

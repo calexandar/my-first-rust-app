@@ -1,0 +1,19 @@
+[package]
+name = "rust-inertia-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+inertia-laravel-rust = { git = "https://github.com/inertiajs/inertia-laravel-rust", rev = "f8c46e734cedeea99a5417783b4d7a6488c062f8", default-features = false, features = ["axum", "tower-sessions"] }
+axum = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tower-http = { version = "0.7", features = ["fs"] }
+tower-sessions = { version = "0.15", features = ["memory-store"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
