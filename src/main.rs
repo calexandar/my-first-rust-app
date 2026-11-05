@@ -6,6 +6,8 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    dotenvy::dotenv().ok();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
@@ -14,6 +16,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .init();
 
     let config = AppConfig::from_env()?;
+    let pool = rust_inertia_app::db::connect(&config.database_url).await?;
+    rust_inertia_app::db::migrate(&pool).await?;
     let listener = TcpListener::bind((config.host.as_str(), config.port)).await?;
 
     tracing::info!(
@@ -23,7 +27,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         config.env
     );
 
-    axum::serve(listener, rust_inertia_app::app(&config))
+    axum::serve(listener, rust_inertia_app::app(&config, pool))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 

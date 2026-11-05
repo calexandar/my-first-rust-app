@@ -7,6 +7,7 @@ pub struct AppConfig {
     pub host: String,
     pub port: u16,
     pub url: String,
+    pub database_url: String,
 }
 
 impl AppConfig {
@@ -22,12 +23,16 @@ impl AppConfig {
         };
 
         let url = env::var("APP_URL").unwrap_or_else(|_| format!("http://{host}:{port}"));
+        let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rust_inertia_app:change-me-local@127.0.0.1:5432/rust_inertia_app".to_owned()
+        });
 
         Ok(Self {
             env,
             host,
             port,
             url,
+            database_url,
         })
     }
 

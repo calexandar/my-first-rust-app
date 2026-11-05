@@ -82,10 +82,29 @@
 
 ## Phase 3 — Persistence
 
-- [ ] Database configuration
-- [ ] Migrations
-- [ ] Example feature
-- [ ] Database integration tests
+- [x] PostgreSQL connection configuration (`DATABASE_URL`, `TEST_DATABASE_URL`)
+- [x] SQLx pool, startup migrations, and documented migration workflow
+- [x] Contact messages persisted to and listed from PostgreSQL
+- [x] Session-scoped listing prevents exposing other visitors' records
+- [x] Parameterized SQL with a query-serving index
+- [x] Database integration tests against an isolated test database
+- [x] Database errors mapped to generic `500` responses without leaking details
+
+### Phase 3 verification log
+
+- Local PostgreSQL 17.4 (Laragon) is reachable on `127.0.0.1:5432`; local `pg_hba.conf` uses trust authentication.
+- Created the `rust_inertia_app` role plus the `rust_inertia_app` and `rust_inertia_app_test` databases.
+- Added `sqlx` 0.8.6 with only `runtime-tokio`, `postgres`, `migrate`, and `macros`; no TLS feature is enabled for local PostgreSQL.
+- Chose SQLx runtime query APIs (`query_as`) so builds and CI do not require a live database; startup still runs embedded migrations.
+- `migrations/20261105000000_create_contact_messages.sql` applied successfully to both databases and created `contact_messages` plus `contact_messages_session_created_idx`.
+- Contact submissions insert one row per valid POST. The Contact page lists the current session's 20 most recent rows, newest first.
+- SQL uses bind parameters throughout; multi-step writes are not present, so no explicit transaction is currently required.
+- `cargo fmt --all -- --check`: passed.
+- `cargo clippy --all-targets -- -D warnings`: passed.
+- `cargo test`: passed; 10 unit tests and 13 integration tests, including DB-backed creation, listing, session isolation, flash behavior, SQL-injection-as-data, and a generic 500 for database failures.
+- `npm run typecheck` and `npm run build`: passed; 593 modules.
+- Runtime check: the server started against the development database, POST `/contact` persisted a row, and a follow-up Inertia GET returned the saved message plus the one-time success flash.
+- Runtime verification rows were deleted and the test database was truncated after the checks.
 
 ## Phase 4 — Authentication
 

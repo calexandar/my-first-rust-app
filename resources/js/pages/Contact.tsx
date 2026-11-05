@@ -3,9 +3,18 @@ import type { FormEvent } from 'react';
 
 import type { SharedProps } from '../types';
 
+type ContactMessage = {
+  id: number;
+  name: string;
+  email: string;
+  message: string;
+  created_at: string;
+};
+
 type Props = {
   headline: string;
   supportEmail: string;
+  messages: ContactMessage[];
 };
 
 type ContactForm = {
@@ -17,7 +26,11 @@ type ContactForm = {
 const fieldClass =
   'w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200 disabled:cursor-not-allowed disabled:bg-stone-100';
 
-export default function Contact({ headline, supportEmail }: Props) {
+export default function Contact({
+  headline,
+  supportEmail,
+  messages,
+}: Props) {
   const { flash } = usePage<SharedProps>();
   const form = useForm<ContactForm>({ name: '', email: '', message: '' });
   const success = typeof flash.success === 'string' ? flash.success : null;
@@ -40,7 +53,8 @@ export default function Contact({ headline, supportEmail }: Props) {
           <p className="text-lg text-stone-700">{headline}</p>
           <p className="text-sm text-stone-500">
             This form is validated on the server. Field errors and the success
-            message come back through Inertia.
+            message come back through Inertia, and saved messages are stored in
+            PostgreSQL.
           </p>
         </header>
 
@@ -133,7 +147,8 @@ export default function Contact({ headline, supportEmail }: Props) {
 
           <div className="flex flex-wrap items-center justify-between gap-4">
             <p className="text-xs text-stone-500">
-              Messages are sent to {supportEmail}.
+              Questions? Email {supportEmail}. Saved messages are only shown in
+              this browser session.
             </p>
             <button
               type="submit"
@@ -144,6 +159,46 @@ export default function Contact({ headline, supportEmail }: Props) {
             </button>
           </div>
         </form>
+
+        <section aria-labelledby="messages-heading" className="space-y-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 id="messages-heading" className="text-lg font-semibold">
+              Recent messages from this browser
+            </h2>
+            <span className="text-xs text-stone-500">
+              {messages.length} saved
+            </span>
+          </div>
+
+          {messages.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-stone-300 bg-white px-4 py-6 text-sm text-stone-500">
+              No messages yet. Submit the form to save one.
+            </p>
+          ) : (
+            <ul className="space-y-3">
+              {messages.map((message) => (
+                <li
+                  key={message.id}
+                  className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm"
+                >
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="font-medium">{message.name}</p>
+                    <time
+                      dateTime={message.created_at}
+                      className="text-xs text-stone-500"
+                    >
+                      {new Date(message.created_at).toLocaleString()}
+                    </time>
+                  </div>
+                  <p className="mt-1 text-sm text-stone-500">{message.email}</p>
+                  <p className="mt-3 whitespace-pre-wrap text-sm text-stone-700">
+                    {message.message}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </section>
     </>
   );

@@ -1,4 +1,5 @@
 pub mod config;
+pub mod db;
 pub mod errors;
 pub mod features;
 pub mod vite;
@@ -8,6 +9,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::routing::get;
 use inertia::axum::InertiaLayer;
 use inertia::{Config, View, props};
+use sqlx::PgPool;
 use tower_http::services::ServeDir;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
 
@@ -18,11 +20,11 @@ use crate::vite::Vite;
 
 const BODY_LIMIT: usize = 16 * 1024;
 
-pub fn app(config: &AppConfig) -> Router {
-    app_with(config, inertia_config())
+pub fn app(config: &AppConfig, pool: PgPool) -> Router {
+    app_with(config, inertia_config(), pool)
 }
 
-pub fn app_with(config: &AppConfig, inertia: Config) -> Router {
+pub fn app_with(config: &AppConfig, inertia: Config, pool: PgPool) -> Router {
     let inertia = inertia.share({
         let environment = config.env.clone();
         move |_request| {
@@ -52,6 +54,7 @@ pub fn app_with(config: &AppConfig, inertia: Config) -> Router {
         )
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .nest_service("/build", ServeDir::new("public/build"))
+        .with_state(pool)
 }
 
 pub fn inertia_config() -> Config {
