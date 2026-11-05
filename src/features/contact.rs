@@ -1,5 +1,4 @@
 use axum::Json;
-use axum::body::Body;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Response;
@@ -9,6 +8,8 @@ use sqlx::PgPool;
 use tower_sessions::Session;
 
 use crate::errors::AppError;
+use crate::http::into_http_response;
+use crate::validation::is_email;
 
 const SUCCESS_MESSAGE: &str = "Thanks! Your message was received.";
 const UPDATE_MESSAGE: &str = "Contact details updated.";
@@ -224,28 +225,6 @@ fn validate(form: &ContactForm) -> ValidationErrors {
     errors
 }
 
-fn is_email(value: &str) -> bool {
-    if value.chars().any(char::is_whitespace) {
-        return false;
-    }
-
-    let Some((local, domain)) = value.split_once('@') else {
-        return false;
-    };
-
-    !local.is_empty()
-        && !domain.is_empty()
-        && !domain.contains('@')
-        && domain.contains('.')
-        && !domain.starts_with('.')
-        && !domain.ends_with('.')
-}
-
-fn into_http_response(response: inertia::HttpResponse) -> Response {
-    let (parts, body) = response.into_parts();
-    Response::from_parts(parts, Body::from(body))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,24 +277,6 @@ mod tests {
             errors.first("message"),
             Some("Your message must be at least 10 characters.")
         );
-    }
-
-    #[test]
-    fn email_validation_rejects_obviously_invalid_addresses() {
-        for email in [
-            "",
-            "plain",
-            "@example.com",
-            "a@b",
-            "a b@example.com",
-            "a@example.",
-        ] {
-            assert!(!is_email(email), "{email}");
-        }
-
-        for email in ["a@example.com", "first.last+tag@sub.example.com"] {
-            assert!(is_email(email), "{email}");
-        }
     }
 
     #[test]

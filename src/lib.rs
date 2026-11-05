@@ -1,21 +1,29 @@
+pub mod auth;
 pub mod config;
+pub mod csrf;
 pub mod db;
 pub mod errors;
 pub mod features;
+pub mod http;
+pub mod validation;
 pub mod vite;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::get;
+use axum::middleware::{from_fn, from_fn_with_state};
+use axum::routing::{get, post};
 use inertia::axum::InertiaLayer;
 use inertia::{Config, View, props};
 use sqlx::PgPool;
+use time::Duration;
 use tower_http::services::ServeDir;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use tower_sessions::cookie::SameSite;
+use tower_sessions::{Expiry, SessionManagerLayer};
+use tower_sessions_sqlx_store::PostgresStore;
 
 use crate::config::AppConfig;
 use crate::errors::AppError;
-use crate::features::{about, contact, home};
+use crate::features::{about, admin, auth as auth_handlers, contact, dashboard, home};
 use crate::vite::Vite;
 
 const BODY_LIMIT: usize = 16 * 1024;
@@ -25,6 +33,16 @@ pub fn app(config: &AppConfig, pool: PgPool) -> Router {
 }
 
 pub fn app_with(config: &AppConfig, inertia: Config, pool: PgPool) -> Router {
+    let session_store = db::session_store(&pool);
+    app_with_session_store(config, inertia, pool, session_store)
+}
+
+pub fn app_with_session_store(
+    config: &AppConfig,
+    inertia: Config,
+    pool: PgPool,
+    session_store: PostgresStore,
+) -> Router {
     let inertia = inertia.share({
         let environment = config.env.clone();
         move |_request| {
@@ -35,7 +53,7 @@ pub fn app_with(config: &AppConfig, inertia: Config, pool: PgPool) -> Router {
         }
     });
 
-    Router::new()
+    let pages = Router::new()
         .route("/", get(home::index))
         .route("/about", get(about::index))
         .route(
@@ -46,13 +64,35 @@ pub fn app_with(config: &AppConfig, inertia: Config, pool: PgPool) -> Router {
                 .patch(contact::patch)
                 .delete(contact::destroy),
         )
-        .route("/health", get(health))
+        .route(
+            "/login",
+            get(auth_handlers::login_form).post(auth_handlers::login),
+        )
+        .route(
+            "/register",
+            get(auth_handlers::register_form).post(auth_handlers::register),
+        )
+        .route("/logout", post(auth_handlers::logout))
+        .route("/dashboard", get(dashboard::index))
+        .route("/admin/users", get(admin::users))
         .fallback(not_found)
+        .layer(from_fn_with_state(pool.clone(), auth::load_current_user))
+        .layer(from_fn(csrf::protect))
         .layer(InertiaLayer::new(inertia))
         .layer(
-            SessionManagerLayer::new(MemoryStore::default()).with_secure(config.secure_cookies()),
+            SessionManagerLayer::new(session_store)
+                .with_name("rust_inertia_session")
+                .with_http_only(true)
+                .with_same_site(SameSite::Strict)
+                .with_secure(config.secure_cookies())
+                .with_path("/")
+                .with_expiry(Expiry::OnInactivity(Duration::days(14))),
         )
-        .layer(DefaultBodyLimit::max(BODY_LIMIT))
+        .layer(DefaultBodyLimit::max(BODY_LIMIT));
+
+    Router::<PgPool>::new()
+        .merge(pages)
+        .route("/health", get(health))
         .nest_service("/build", ServeDir::new("public/build"))
         .with_state(pool)
 }

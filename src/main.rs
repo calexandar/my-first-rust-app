@@ -2,6 +2,7 @@ use std::error::Error;
 
 use rust_inertia_app::config::AppConfig;
 use tokio::net::TcpListener;
+use tower_sessions::ExpiredDeletion;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -18,6 +19,24 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let config = AppConfig::from_env()?;
     let pool = rust_inertia_app::db::connect(&config.database_url).await?;
     rust_inertia_app::db::migrate(&pool).await?;
+
+    let session_store = rust_inertia_app::db::session_store(&pool);
+    let cleanup_store = session_store.clone();
+    tokio::spawn(async move {
+        if let Err(error) = cleanup_store
+            .continuously_delete_expired(tokio::time::Duration::from_secs(3600))
+            .await
+        {
+            tracing::error!(%error, "session cleanup stopped");
+        }
+    });
+
+    let router = rust_inertia_app::app_with_session_store(
+        &config,
+        rust_inertia_app::inertia_config(),
+        pool,
+        session_store,
+    );
     let listener = TcpListener::bind((config.host.as_str(), config.port)).await?;
 
     tracing::info!(
@@ -27,7 +46,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         config.env
     );
 
-    axum::serve(listener, rust_inertia_app::app(&config, pool))
+    axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 

@@ -31,7 +31,8 @@ export default function Contact({
   supportEmail,
   messages,
 }: Props) {
-  const { flash } = usePage<SharedProps>();
+  const { flash, props } = usePage<SharedProps>();
+  const csrfToken = props.csrfToken ?? '';
   const form = useForm<ContactForm>({ name: '', email: '', message: '' });
   const success = typeof flash.success === 'string' ? flash.success : null;
 
@@ -39,6 +40,7 @@ export default function Contact({
     event.preventDefault();
 
     form.post('/contact', {
+      headers: { 'X-CSRF-TOKEN': csrfToken },
       preserveScroll: true,
       onSuccess: () => form.reset(),
     });

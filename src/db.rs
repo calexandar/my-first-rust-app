@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use sqlx::postgres::{PgPool, PgPoolOptions};
+use tower_sessions_sqlx_store::PostgresStore;
 
 pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
     PgPoolOptions::new()
@@ -10,6 +11,13 @@ pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
         .await
 }
 
-pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
-    sqlx::migrate!("./migrations").run(pool).await
+pub async fn migrate(pool: &PgPool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    sqlx::migrate!("./migrations").run(pool).await?;
+    session_store(pool).migrate().await?;
+
+    Ok(())
+}
+
+pub fn session_store(pool: &PgPool) -> PostgresStore {
+    PostgresStore::new(pool.clone())
 }

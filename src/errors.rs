@@ -7,6 +7,7 @@ use axum::response::{IntoResponse, Response};
 #[derive(Debug)]
 pub enum AppError {
     BadRequest(&'static str),
+    Forbidden,
     NotFound,
     Internal(Box<dyn Error + Send + Sync>),
 }
@@ -27,6 +28,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match self {
             Self::BadRequest(message) => (StatusCode::BAD_REQUEST, message).into_response(),
+            Self::Forbidden => (StatusCode::FORBIDDEN, "Forbidden").into_response(),
             Self::NotFound => (StatusCode::NOT_FOUND, "Not Found").into_response(),
             Self::Internal(error) => {
                 tracing::error!(%error, "internal server error");

@@ -108,12 +108,28 @@
 
 ## Phase 4 — Authentication
 
-- [ ] Persistent session store
-- [ ] Registration/login as required
-- [ ] Logout and session invalidation
-- [ ] CSRF strategy verified
-- [ ] Authorization
-- [ ] Secure production cookies
+- [x] Persistent session store
+- [x] Registration/login as required
+- [x] Logout and session invalidation
+- [x] CSRF strategy verified
+- [x] Authorization
+- [x] Secure production cookies
+
+### Phase 4 verification log
+
+- Added `users` (`migrations/20261105010000_create_users.sql`) and the `tower_sessions.session` store. Startup migrates both schemas.
+- `tower-sessions` uses the 0.15 line. The crates.io `tower-sessions-sqlx-store` 0.15.0 release depends on `tower-sessions-core` 0.14, so the store is pinned to Git revision `be0f230fadb4ca0496d4cabc946ae7778eee37e6`, which targets core 0.15 and SQLx 0.8.
+- Passwords are hashed with Argon2id through `argon2` 0.6 inside `spawn_blocking`. Registration requires a 12–128 character password; login returns the same credential error for unknown emails and wrong passwords, with a dummy hash for unknown emails.
+- Registration/login rotate the session ID and CSRF token. Logout flushes the session and clears Inertia history. The session cookie is `rust_inertia_session` with `HttpOnly`, `SameSite=Strict`, `Path=/`, a 14-day inactivity expiry, and `Secure` when `APP_URL` is HTTPS.
+- CSRF middleware shares `csrfToken` with every page and requires the `x-csrf-token` header on unsafe methods. Missing/invalid tokens return `403 Invalid CSRF token.`
+- `AuthenticatedUser` redirects guests to `/login`; `AdminUser` returns `403 Forbidden` for signed-in non-admins. Both redirects use Axum's `Redirect::to`, which returns `303`; successful auth POSTs use Inertia redirects and return `302`.
+- Added login/register pages, auth navigation, dashboard, admin user listing, flash display, encrypted history, and CSRF headers to the React frontend.
+- `cargo fmt --all -- --check`: passed.
+- `cargo clippy --all-targets -- -D warnings`: passed.
+- `cargo test`: passed; 17 unit tests and 21 integration tests. Coverage includes registration, duplicate email rejection, generic login failures, session/CSRF rotation, logout invalidation, guest redirects, admin authorization, persistent sessions, and CSRF rejection.
+- `npm run typecheck` and `npm run build`: passed; 597 modules; auth pages and admin/dashboard chunks generated.
+- Runtime check against the development database: registration persisted an Argon2id hash, rotated cookies/tokens, flashed success, and loaded the dashboard. Missing CSRF returned `403`; non-admin `/admin/users` returned `403`; a promoted admin saw the admin page. The session cookie still authenticated after a server restart, confirming the PostgreSQL-backed store. Logout invalidated the old cookie; login rotated the session again; bad credentials returned the generic error.
+- Runtime users and session rows were deleted and the server was stopped after verification.
 
 ## Phase 5 — Application feature
 
