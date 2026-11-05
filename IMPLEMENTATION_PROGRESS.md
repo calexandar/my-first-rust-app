@@ -58,11 +58,27 @@
 
 ## Phase 2 — Inertia workflows
 
-- [ ] Shared props
-- [ ] Validation errors
-- [ ] Successful form submission
-- [ ] Redirects
-- [ ] Flash messages
+- [x] Shared props (`appName`, `environment`)
+- [x] Validation errors (server-side `ValidationErrors`, field-level errors on `Contact`)
+- [x] Successful form submission (`POST /contact`)
+- [x] Redirects (302 after `POST`, 303 after `PUT`, `PATCH`, and `DELETE`)
+- [x] Flash messages (success flash shown once and not kept in browser history)
+- [x] Consistent application error type (`AppError`: generic 400, 404, and 500 responses)
+- [x] Reusable `useForm` example with processing/disabled state and accessible labels
+- [x] Failed validation preserves form values in the browser
+
+### Phase 2 verification log
+
+- `cargo fmt --all -- --check`: passed.
+- `cargo clippy --all-targets -- -D warnings`: passed.
+- `cargo test`: passed; 9 unit tests and 10 integration tests.
+- `npm run typecheck`: passed.
+- `npm run build`: passed; 593 modules; `Contact` chunk generated.
+- Integration tests verified shared props, field-level validation errors, success redirects and one-time flash data, `AppError` mappings, and protocol redirect statuses (`POST` 302; `PUT`/`PATCH`/`DELETE` 303).
+- Headless Chrome (DevTools Protocol), `Contact` form: invalid submission showed the correct field errors, kept the values, set `aria-invalid`, and kept the URL on `/contact`.
+- Headless Chrome observed the disabled “Sending...” button during the request, then a successful redirect and flash. The form reset, the flash disappeared after navigation and reload, and it was absent from `history.state`.
+- Headless Chrome reported 2 `POST /contact` requests, 0 console errors, 0 uncaught exceptions, 0 failed requests, and 0 HTTP responses at or above 400.
+- Server and Vite processes were stopped and `public/hot` was removed after verification.
 
 ## Phase 3 — Persistence
 

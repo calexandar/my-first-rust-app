@@ -1,4 +1,5 @@
 pub mod config;
+pub mod errors;
 pub mod features;
 pub mod vite;
 
@@ -11,7 +12,8 @@ use tower_http::services::ServeDir;
 use tower_sessions::{MemoryStore, SessionManagerLayer};
 
 use crate::config::AppConfig;
-use crate::features::{about, home};
+use crate::errors::AppError;
+use crate::features::{about, contact, home};
 use crate::vite::Vite;
 
 const BODY_LIMIT: usize = 16 * 1024;
@@ -21,10 +23,29 @@ pub fn app(config: &AppConfig) -> Router {
 }
 
 pub fn app_with(config: &AppConfig, inertia: Config) -> Router {
+    let inertia = inertia.share({
+        let environment = config.env.clone();
+        move |_request| {
+            props! {
+                appName => "Rust Inertia App",
+                environment => environment.clone(),
+            }
+        }
+    });
+
     Router::new()
         .route("/", get(home::index))
         .route("/about", get(about::index))
+        .route(
+            "/contact",
+            get(contact::index)
+                .post(contact::store)
+                .put(contact::update)
+                .patch(contact::patch)
+                .delete(contact::destroy),
+        )
         .route("/health", get(health))
+        .fallback(not_found)
         .layer(InertiaLayer::new(inertia))
         .layer(
             SessionManagerLayer::new(MemoryStore::default()).with_secure(config.secure_cookies()),
@@ -61,13 +82,12 @@ pub fn inertia_config() -> Config {
                 body = view.body,
             )
         })
-        .share(|_request| {
-            props! {
-                appName => "Rust Inertia App",
-            }
-        })
 }
 
 async fn health() -> &'static str {
     "ok"
+}
+
+async fn not_found() -> AppError {
+    AppError::NotFound
 }
