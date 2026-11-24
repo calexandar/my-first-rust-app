@@ -1,5 +1,7 @@
 # rust-inertia-app
 
+![rust-inertia-app](rust_inertiajs_app.png)
+
 A full-stack application using Rust, Axum, Inertia.js v3, React, TypeScript, Vite, and Tailwind CSS 4.
 
 Rust owns routing, request handling, and server-side logic. React owns the interactive UI. Inertia connects the two without a separate REST API or a client-side router for normal page navigation.
